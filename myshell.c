@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 
 #define MAX_CMD_LEN 1024
@@ -134,13 +135,27 @@ void build_command_from_args(char **args, int argc, Command *cmd) {
 // set up I/O redirections
 void setup_redirections(Command *cmd) {
 
-    // TODO: Complete this function (hint: Read comment below)
+    if (cmd->input_file != NULL) {
+        int in_fd = open(cmd->input_file, O_RDONLY);
+        if (in_fd < 0) {
+            write_str("Error: cannot open input file\n");
+            _exit(1);
+        }
+        dup2(in_fd, STDIN_FILENO);
+        close(in_fd);
+    }
 
-    // Open the file in the input struct Command in appropriate mode
-    // and dup it to appropriate File Descriptor
-    // Recall the keywords: STDIN_FILENO, STDOUT_FILENO, ...
-    // Read manpage of open() (modes are O_RDONLY, O_WRONLY, ...)
-
+    if (cmd->output_file != NULL) {
+        int flags = O_WRONLY | O_CREAT;
+        flags |= cmd->append_output ? O_APPEND : O_TRUNC;
+        int out_fd = open(cmd->output_file, flags, 0644);
+        if (out_fd < 0) {
+            write_str("Error: cannot open output file\n");
+            _exit(1);
+        }
+        dup2(out_fd, STDOUT_FILENO);
+        close(out_fd);
+    }
 }
 
 // Find and remember positions of the pipe (|) character in args
@@ -186,22 +201,53 @@ void execute_cmds(char **args, int argc) {
     // set up redirections, and execute cmd)
     for (i = 0; i < num_cmds; i++) {
 
-        // TODO: Complete this loop body (hint: read comments below)
-
         // determine the start and end of the current cmd
-       
+        cmd_start = (i == 0) ? 0 : pipe_positions[i - 1] + 1;
+        cmd_end = (i == num_cmds - 1) ? argc : pipe_positions[i];
+
         // build struct Command for the current command (will
         // be used by the child to set up redirections)
-       
-        // fork the child process
+        build_command_from_args(&args[cmd_start], cmd_end - cmd_start, &cmd);
 
-        // Inside the child process, do the following:
+        // fork the child process
+        pid = fork();
+
+        if (pid < 0) {
+            write_str("Error: fork failed\n");
+            continue;
+        }
+
+        if (pid == 0) {
+            // Inside the child process:
+
             // set up the pipe redirections appropriately
+            if (i > 0) {
+                // not the first command: read from previous pipe
+                dup2(pipefds[i - 1][0], STDIN_FILENO);
+            }
+            if (i < num_cmds - 1) {
+                // not the last command: write to next pipe
+                dup2(pipefds[i][1], STDOUT_FILENO);
+            }
+
             // close the pipefds inherited from the parent
-            // set up input-output file redirections for the current 
-            //    command (see fields of struct Command)
+            for (j = 0; j < num_pipes; j++) {
+                close(pipefds[j][0]);
+                close(pipefds[j][1]);
+            }
+
+            // set up input-output file redirections for the current
+            // command (see fields of struct Command)
+            setup_redirections(&cmd);
+
             // exec() the child command
+            execvp(cmd.args[0], cmd.args);
+
             // actions to do if exec() fails
+            write_str("Error: exec failed for command\n");
+            _exit(1);
+        }
+        // parent continues the loop to fork the next command
     }
     
     // (myshell process has finished launching all commands)
@@ -270,4 +316,3 @@ int main() {
     
     return 0;
 }
-

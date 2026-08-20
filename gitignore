@@ -1,0 +1,9 @@
+# Compiled output
+myshell
+*.o
+*.out
+
+# Editor/OS files
+.vscode/
+*.swp
+.DS_Store
